@@ -1,5 +1,6 @@
-from .eval import ThreeDEvaluator
+from .eval import ThreeDEvaluator, DetailedThreeDEvaluator
 
 __all__ = [
-    'ThreeDEvaluator'
+    'ThreeDEvaluator',
+    'DetailedThreeDEvaluator'
 ]

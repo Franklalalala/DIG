@@ -43,6 +43,7 @@ setuptools.setup(
                       'tqdm',
                       'rdkit-pypi',
                       'pandas',
+                      'seaborn',
                       'sympy',
                       'hydra-core'],
     python_requires='>=3.6',

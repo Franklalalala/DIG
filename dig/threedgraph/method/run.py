@@ -1,24 +1,26 @@
-
-import time
 import os
+import os
+
 import torch
-from torch.optim import Adam
-from torch_geometric.data import DataLoader
-import numpy as np
 from torch.autograd import grad
+from torch.optim import Adam, AdamW
+from torch.optim.lr_scheduler import StepLR, CyclicLR, ExponentialLR
 from torch.utils.tensorboard import SummaryWriter
-from torch.optim.lr_scheduler import StepLR
+from torch_geometric.data import DataLoader
 from tqdm import tqdm
+
 
 class run():
     r"""
     The base script for running different 3DGN methods.
     """
+
     def __init__(self):
         pass
-        
-    def run(self, device, train_dataset, valid_dataset, test_dataset, model, loss_func, evaluation, epochs=500, batch_size=32, vt_batch_size=32, lr=0.0005, lr_decay_factor=0.5, lr_decay_step_size=50, weight_decay=0, 
-        energy_and_force=False, p=100, save_dir='', log_dir=''):
+
+    def run(self, device, train_dataset, valid_dataset, test_dataset, model, loss_func, evaluation, epochs=500,
+            batch_size=32, vt_batch_size=32, lr=0.0005, lr_decay_factor=0.5, lr_decay_step_size=50, weight_decay=0,
+            energy_and_force=False, p=100, save_dir='', log_dir=''):
         r"""
         The run script for training and validation.
         
@@ -42,7 +44,7 @@ class run():
             save_dir (str, optinal): The path to save trained models. If set to :obj:`''`, will not save the model. (default: :obj:`''`)
             log_dir (str, optinal): The path to save log files. If set to :obj:`''`, will not save the log files. (default: :obj:`''`)
         
-        """        
+        """
 
         model = model.to(device)
         num_params = sum(p.numel() for p in model.parameters())
@@ -55,7 +57,7 @@ class run():
         test_loader = DataLoader(test_dataset, vt_batch_size, shuffle=False)
         best_valid = float('inf')
         best_test = float('inf')
-            
+
         if save_dir != '':
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
@@ -63,10 +65,10 @@ class run():
             if not os.path.exists(log_dir):
                 os.makedirs(log_dir)
             writer = SummaryWriter(log_dir=log_dir)
-        
+
         for epoch in range(1, epochs + 1):
             print("\n=====Epoch {}".format(epoch), flush=True)
-            
+
             print('\nTraining...', flush=True)
             train_mae = self.train(model, optimizer, train_loader, energy_and_force, p, loss_func, device)
 
@@ -74,7 +76,8 @@ class run():
             valid_mae = self.val(model, valid_loader, energy_and_force, p, evaluation, device)
 
             print('\n\nTesting...', flush=True)
-            test_mae = self.val(model, test_loader, energy_and_force, p, evaluation, device)
+            test_mae = 0
+            # test_mae = self.val(model, test_loader, energy_and_force, p, evaluation, device)
 
             print()
             print({'Train': train_mae, 'Validation': valid_mae, 'Test': test_mae})
@@ -83,22 +86,160 @@ class run():
                 writer.add_scalar('train_mae', train_mae, epoch)
                 writer.add_scalar('valid_mae', valid_mae, epoch)
                 writer.add_scalar('test_mae', test_mae, epoch)
-            
+                writer.add_scalar('lr', scheduler.get_lr()[0], epoch)
+                writer.add_scalar('epoch', epoch, epoch)
+
             if valid_mae < best_valid:
                 best_valid = valid_mae
                 best_test = test_mae
                 if save_dir != '':
                     print('Saving checkpoint...')
-                    checkpoint = {'epoch': epoch, 'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), 'scheduler_state_dict': scheduler.state_dict(), 'best_valid_mae': best_valid, 'num_params': num_params}
+                    checkpoint = {'epoch': epoch, 'model_state_dict': model.state_dict(),
+                                  'optimizer_state_dict': optimizer.state_dict(),
+                                  'scheduler_state_dict': scheduler.state_dict(), 'best_valid_mae': best_valid,
+                                  'num_params': num_params}
                     torch.save(checkpoint, os.path.join(save_dir, 'valid_checkpoint.pt'))
 
             scheduler.step()
 
         print(f'Best validation MAE so far: {best_valid}')
         print(f'Test MAE when got best validation result: {best_test}')
-        
+
         if log_dir != '':
             writer.close()
+
+    def runCLR(self, device, train_dataset, valid_dataset, model, loss_func, evaluation, epochs=500,
+            batch_size=32, val_batch_size=32,
+            energy_and_force=False, p=100, save_dir='', log_dir='',
+            optimizer_args: dict = {'max_lr': 1e-3, 'base_lr': 1e-5, 'step_size_up': 10, 'step_size_down': 40,
+                                    'mode': "exp_range"}):
+        model = model.to(device)
+        num_params = sum(p.numel() for p in model.parameters())
+        print(f'#Params: {num_params}')
+        optimizer = AdamW(model.parameters(), lr=optimizer_args['max_lr'])
+        scheduler = CyclicLR(optimizer,
+                             base_lr=optimizer_args['base_lr'],
+                             max_lr=optimizer_args['max_lr'],
+                             step_size_up=optimizer_args['step_size_up'],
+                             step_size_down=optimizer_args['step_size_down'],
+                             mode=optimizer_args['mode'],
+                             cycle_momentum=False)
+
+        train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
+        valid_loader = DataLoader(valid_dataset, val_batch_size, shuffle=False)
+        best_valid = float('inf')
+
+        if save_dir != '':
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+        if log_dir != '':
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir)
+            writer = SummaryWriter(log_dir=log_dir)
+
+        for epoch in range(1, epochs + 1):
+            print("\n=====Epoch {}".format(epoch), flush=True)
+
+            print('\nTraining...', flush=True)
+            train_mae = self.train(model, optimizer, train_loader, energy_and_force, p, loss_func, device)
+
+            print('\n\nEvaluating...', flush=True)
+            valid_mae = self.val(model, valid_loader, energy_and_force, p, evaluation, device)
+
+            print({'Train': train_mae, 'Validation': valid_mae})
+
+            if log_dir != '':
+                writer.add_scalar('train_mae', train_mae, epoch)
+                writer.add_scalar('valid_mae', valid_mae, epoch)
+                writer.add_scalar('lr', scheduler.get_lr()[0], epoch)
+                writer.add_scalar('epoch', epoch, epoch)
+
+            if valid_mae < best_valid:
+                best_valid = valid_mae
+                if save_dir != '':
+                    print('Saving checkpoint...')
+                    checkpoint = {'epoch': epoch, 'model_state_dict': model.state_dict(),
+                                  'optimizer_state_dict': optimizer.state_dict(),
+                                  'scheduler_state_dict': scheduler.state_dict(), 'best_valid_mae': best_valid,
+                                  'num_params': num_params}
+                    torch.save(checkpoint, os.path.join(save_dir, 'valid_checkpoint.pt'))
+            else:
+                checkpoint = {'epoch': epoch, 'model_state_dict': model.state_dict(),
+                              'optimizer_state_dict': optimizer.state_dict(),
+                              'scheduler_state_dict': scheduler.state_dict(), 'best_valid_mae': best_valid,
+                              'num_params': num_params}
+                torch.save(checkpoint, os.path.join(save_dir, 'last.pt'))
+
+            scheduler.step()
+
+        print(f'Best validation MAE so far: {best_valid}')
+
+        if log_dir != '':
+            writer.close()
+
+    def runExpo(self, device, train_dataset, valid_dataset, model, loss_func, evaluation, epochs=500,
+            batch_size=32, val_batch_size=32,
+            energy_and_force=False, p=100, save_dir='', log_dir='',
+            optimizer_args: dict = {'lr': 5e-4, 'gamma': 0.98}):
+
+        model = model.to(device)
+        num_params = sum(p.numel() for p in model.parameters())
+        print(f'#Params: {num_params}')
+        optimizer = AdamW(model.parameters(), lr=optimizer_args['lr'])
+        scheduler = ExponentialLR(optimizer=optimizer, gamma=0.98)
+
+        train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
+        valid_loader = DataLoader(valid_dataset, val_batch_size, shuffle=False)
+        best_valid = float('inf')
+
+        if save_dir != '':
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+        if log_dir != '':
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir)
+            writer = SummaryWriter(log_dir=log_dir)
+
+        for epoch in range(1, epochs + 1):
+            print("\n=====Epoch {}".format(epoch), flush=True)
+
+            print('\nTraining...', flush=True)
+            train_mae = self.train(model, optimizer, train_loader, energy_and_force, p, loss_func, device)
+
+            print('\n\nEvaluating...', flush=True)
+            valid_mae = self.val(model, valid_loader, energy_and_force, p, evaluation, device)
+
+            print({'Train': train_mae, 'Validation': valid_mae})
+
+            if log_dir != '':
+                writer.add_scalar('train_mae', train_mae, epoch)
+                writer.add_scalar('valid_mae', valid_mae, epoch)
+                writer.add_scalar('lr', scheduler.get_lr()[0], epoch)
+                writer.add_scalar('epoch', epoch, epoch)
+
+            if valid_mae < best_valid:
+                best_valid = valid_mae
+                if save_dir != '':
+                    print('Saving checkpoint...')
+                    checkpoint = {'epoch': epoch, 'model_state_dict': model.state_dict(),
+                                  'optimizer_state_dict': optimizer.state_dict(),
+                                  'scheduler_state_dict': scheduler.state_dict(), 'best_valid_mae': best_valid,
+                                  'num_params': num_params}
+                    torch.save(checkpoint, os.path.join(save_dir, 'valid_checkpoint.pt'))
+            else:
+                checkpoint = {'epoch': epoch, 'model_state_dict': model.state_dict(),
+                              'optimizer_state_dict': optimizer.state_dict(),
+                              'scheduler_state_dict': scheduler.state_dict(), 'best_valid_mae': best_valid,
+                              'num_params': num_params}
+                torch.save(checkpoint, os.path.join(save_dir, 'last.pt'))
+
+            scheduler.step()
+
+        print(f'Best validation MAE so far: {best_valid}')
+
+        if log_dir != '':
+            writer.close()
+
 
     def train(self, model, optimizer, train_loader, energy_and_force, p, loss_func, device):
         r"""
@@ -115,7 +256,7 @@ class run():
 
         :rtype: Traning loss. ( :obj:`mae`)
         
-        """   
+        """
         model.train()
         loss_accum = 0
         for step, batch_data in enumerate(tqdm(train_loader)):
@@ -123,7 +264,8 @@ class run():
             batch_data = batch_data.to(device)
             out = model(batch_data)
             if energy_and_force:
-                force = -grad(outputs=out, inputs=batch_data.pos, grad_outputs=torch.ones_like(out),create_graph=True,retain_graph=True)[0]
+                force = -grad(outputs=out, inputs=batch_data.pos, grad_outputs=torch.ones_like(out), create_graph=True,
+                              retain_graph=True)[0]
                 e_loss = loss_func(out, batch_data.y.unsqueeze(1))
                 f_loss = loss_func(force, batch_data.force)
                 loss = e_loss + p * f_loss
@@ -148,7 +290,7 @@ class run():
 
         :rtype: Evaluation result. ( :obj:`mae`)
         
-        """   
+        """
         model.eval()
 
         preds = torch.Tensor([]).to(device)
@@ -157,14 +299,15 @@ class run():
         if energy_and_force:
             preds_force = torch.Tensor([]).to(device)
             targets_force = torch.Tensor([]).to(device)
-        
+
         for step, batch_data in enumerate(tqdm(data_loader)):
             batch_data = batch_data.to(device)
             out = model(batch_data)
             if energy_and_force:
-                force = -grad(outputs=out, inputs=batch_data.pos, grad_outputs=torch.ones_like(out),create_graph=True,retain_graph=True)[0]
-                preds_force = torch.cat([preds_force,force.detach_()], dim=0)
-                targets_force = torch.cat([targets_force,batch_data.force], dim=0)
+                force = -grad(outputs=out, inputs=batch_data.pos, grad_outputs=torch.ones_like(out), create_graph=True,
+                              retain_graph=True)[0]
+                preds_force = torch.cat([preds_force, force.detach_()], dim=0)
+                targets_force = torch.cat([targets_force, batch_data.force], dim=0)
             preds = torch.cat([preds, out.detach_()], dim=0)
             targets = torch.cat([targets, batch_data.y.unsqueeze(1)], dim=0)
 

@@ -7,7 +7,7 @@ from .pronet import ProNet
 
 
 __all__ = [
-    'run', 
+    'run',
     'SchNet',
     'DimeNetPP',
     'SphereNet',

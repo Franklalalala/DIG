@@ -20,7 +20,7 @@ def plot_rel(label: np.ndarray, prediction: np.ndarray, flag: str, mae: float, r
 
     plt.plot(label, label, label=f"Reference Line", c='y')
     plt.legend(loc='best')
-    plt.savefig(f'{flag}_scatter_corr_{r2}_mae_{mae}.png', dpi=400)
+    plt.savefig(f'{flag}_scatter_corr_{str(r2)}_mae_{str(mae)}.png', dpi=400)
 
 
 def thu_heatmap(label: np.ndarray, prediction: np.ndarray, flag: str, mae: float, r2: float,
@@ -28,8 +28,13 @@ def thu_heatmap(label: np.ndarray, prediction: np.ndarray, flag: str, mae: float
     from scipy.stats import gaussian_kde
 
     fig = plt.figure()
-    front1 = {'family': 'arial', 'weight': 'normal', 'size': 12}
-    front2 = {'family': 'arial', 'weight': 'normal', 'size': 14}
+    front1 = {'weight': 'normal', 'size': 12}
+    front2 = {'weight': 'normal', 'size': 14}
+
+
+    # front1 = {'family': 'arial', 'weight': 'normal', 'size': 12}
+    # front2 = {'family': 'arial', 'weight': 'normal', 'size': 14}
+
     plt.xlabel(f'Label of {flag}', front1)  # 绘制x轴
     plt.ylabel(f'Prediction of {flag}', front1)  # 绘制y轴
     plt.tick_params(axis='both', which='major', length=6, width=2, direction='in', labelsize=14)  # 设置主坐标轴刻度大小
@@ -61,11 +66,18 @@ def thu_heatmap(label: np.ndarray, prediction: np.ndarray, flag: str, mae: float
 
     cb1 = plt.colorbar()
 
-    font = {'family': 'Arial',
+    # font = {'family': 'Arial',
+    #         'color': 'black',
+    #         'weight': 'normal',
+    #         'size': 10,
+    #         }
+
+    font = {
             'color': 'black',
             'weight': 'normal',
             'size': 10,
             }
+
     cb1.set_label('Density', fontdict=font)
 
     if xlim_a != 0 and xlim_b != 0:
@@ -75,7 +87,7 @@ def thu_heatmap(label: np.ndarray, prediction: np.ndarray, flag: str, mae: float
     plt.subplots_adjust(left=0.15)  # 左边距
 
     # plt.show()
-    plt.savefig(f'{flag}_heatmap_corr_{r2}_mae_{mae}.png', dpi=400)
+    plt.savefig(f'{flag}_heatmap_corr_{str(r2)}_mae_{str(mae)}.png', dpi=400)
 
 
 def rename_file(flag):
@@ -118,10 +130,11 @@ class ThreeDEvaluator:
 
 
 class DetailedThreeDEvaluator:
-    def __init__(self, dump_info_path: str, info_file_flag: str):
+    def __init__(self, dump_info_path: str, info_file_flag: str, property: str):
         os.makedirs(dump_info_path, exist_ok=True)
         self.dump_info_path = os.path.abspath(dump_info_path)
         self.info_file_flag = info_file_flag
+        self.property = property
 
     def eval(self, input_dict):
 
@@ -136,12 +149,20 @@ class DetailedThreeDEvaluator:
         os.chdir(self.dump_info_path)
         y_pred_flatten = torch.flatten(y_pred).detach().cpu().numpy()
         y_true_flatten = torch.flatten(y_true).detach().cpu().numpy()
+        if self.property in ['viscosity', 'dielectric_constant']:
+            y_true_flatten = pow(10, y_true_flatten)
+            y_pred_flatten = pow(10, y_pred_flatten)
+
         with open("pred", "w") as pred:
             pred.writelines(list(map(lambda x: str(x) + "\n", y_pred_flatten)))
         with open("target", "w") as true:
             true.writelines(list(map(lambda x: str(x) + "\n", y_true_flatten)))
         r, _ = stats.pearsonr(y_true_flatten, y_pred_flatten)
-        mae_e = np.mean(np.abs(y_true_flatten - y_pred_flatten)).round(3)
+        r = round(r, 3)
+        mae_e = np.mean(np.abs(y_true_flatten - y_pred_flatten))
+        mae_e = round(mae_e, 3)
+        print(f'{self.info_file_flag} mae: {str(mae_e)}\n')
+        print(f'{self.info_file_flag} corr: {str(r)}\n')
         plot_rel(label=y_true_flatten, prediction=y_pred_flatten, flag=self.info_file_flag, mae=mae_e, r2=r)
         thu_heatmap(label=y_true_flatten, prediction=y_pred_flatten, flag=self.info_file_flag, mae=mae_e, r2=r)
         rename_file(flag=self.info_file_flag)
